@@ -46,9 +46,17 @@ int retry_num=0;
 static char ip_str[16] = {0};
 
 lv_obj_t * connection_info;
+lv_obj_t *feedList;
 
 // RSS
 #define RSS_READ_CHUNK 512
+
+void gui_create_list()
+{
+    feedList = lv_list_create(lv_scr_act());
+    lv_obj_set_size(feedList, 350, 350);
+    lv_obj_align(feedList, LV_ALIGN_TOP_MID, 0, 20);
+}
 
 static void print_rss_titles(const char *xml)
 {
@@ -68,14 +76,23 @@ static void print_rss_titles(const char *xml)
             if (title_end && title_end < item_end)
             {
                 size_t len = title_end - title_start;
-                char *t = malloc(len + 1);
+                char *title = malloc(len + 1);
 
-                if (t)
+                if (title)
                 {
-                    memcpy(t, title_start, len);
-                    t[len] = '\0';
-                    printf("RSS Title: %s\n", t);
-                    free(t);
+                    memcpy(title, title_start, len);
+                    title[len] = '\0';
+                    printf("RSS Title: %s\n", title);
+                    
+                    // Add new item to the list
+                    lv_obj_t *row = lv_list_add_btn(feedList, NULL, title);
+
+                    static lv_style_t item_style;
+                    lv_style_set_min_height(&item_style, 80);
+                    lv_style_set_text_font(&item_style, &lv_font_montserrat_24);
+                    lv_obj_add_style(row, &item_style, 0);
+
+                    free(title);
                 }
             }
         }
@@ -87,73 +104,60 @@ static void print_rss_titles(const char *xml)
 static void fetch_rss_task(void *arg)
 {
     const char *url = (const char*) arg;
-    esp_err_t err;
-
+    
     esp_http_client_config_t config = {
         .url = url,
         .method = HTTP_METHOD_GET,
+        .timeout_ms = 5000,
         .cert_pem = ca_cert_pem
     };
-
-    // HTTP Client
+    
     esp_http_client_handle_t client = esp_http_client_init(&config);
-    if(!client)
-    {
-        printf("Failed to initialize HTTP client!\n");
-        vTaskDelete(NULL);
-        return;
-    }
-
-    err = esp_http_client_perform(client);
-    if(err != ESP_OK)
-    {
-        printf("HTTP request failed: %s\n", esp_err_to_name(err));
+    
+    // Open connection manually
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        printf("Failed to open connection\n");
         esp_http_client_cleanup(client);
         vTaskDelete(NULL);
         return;
     }
-
+    
+    // Fetch headers
+    int content_length = esp_http_client_fetch_headers(client);
     int status = esp_http_client_get_status_code(client);
     printf("HTTP Status: %d\n", status);
 
-    // Read response in chunks
+    gui_create_list();
+    
+    // NOW read the response body
     char chunk[RSS_READ_CHUNK];
     char *response = NULL;
     size_t total = 0;
     int read_len = 0;
-
-    while(( read_len = esp_http_client_read(client, chunk, sizeof(chunk)) ) > 0)
+    
+    printf("Reading RSS feed...\n");
+    while ((read_len = esp_http_client_read(client, chunk, sizeof(chunk))) > 0)
     {
         char *tmp = realloc(response, total + read_len + 1);
-        if(!tmp)
-        {
-            printf("Ran out of memory while reading response X.X\n");
+        if (!tmp) {
+            printf("Out of memory\n");
             free(response);
-
-            response = NULL;
-            total = 0;
             break;
         }
-
         response = tmp;
         memcpy(response + total, chunk, read_len);
         total += read_len;
     }
-
-    if(response)
-    {
-        response[total] = '\0'; // Null termination so it doesn't go all wonky
-        printf("Successfully received %u bytes!\n", (unsigned)total);
-
+    
+    if (response) {
+        response[total] = '\0';
+        printf("Received %u bytes\n", (unsigned)total);
         print_rss_titles(response);
-
         free(response);
     }
-    else
-    {
-        printf("No response! Something went wrong :[");
-    }
-
+    
+    esp_http_client_close(client);
     esp_http_client_cleanup(client);
     vTaskDelete(NULL);
 }
