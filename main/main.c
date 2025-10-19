@@ -202,7 +202,6 @@ static void wifi_event_handler(void *event_handler_arg, esp_event_base_t event_b
 
         printf("IP address acquired from Wifi network: %s\n\n", ip_str);
 
-        // update your LVGL label if you want
         lv_label_set_text_fmt(connection_info, "Connected!\nIP: %s", ip_str);
 
         // Read an RSS feed
