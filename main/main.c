@@ -14,6 +14,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_event.h"
+#include "esp_mac.h"
 
 // Wifi
 #include "esp_wifi.h"
@@ -47,36 +48,41 @@ static char ip_str[16] = {0};
 lv_obj_t * connection_info;
 
 // RSS
-#define RSS_READ_CHUNK
-static void print_rss_titles(const char* xmk)
+#define RSS_READ_CHUNK 512
+
+static void print_rss_titles(const char *xml)
 {
     const char *p = xml;
-    while((p = strstr(p, "<item")) != NULL)
+    while ((p = strstr(p, "<item")) != NULL)
     {
-        // Move to after <item ...>
-        const char *item_end = strstr(p,"</item>");
-        if(!item_end) break;
-
+        // move to after <item ...>
+        const char *item_end = strstr(p, "</item>");
+        if (!item_end) break;
         const char *title_start = strstr(p, "<title>");
-        if(title_start && title_start < item_end)
+        if (title_start && title_start < item_end)
         {
+
             title_start += strlen("<title>");
-            
-            const *title_end = strstr(title_start, "</title>");
-            if(title_end && title_end < item_end)
+            const char *title_end = strstr(title_start, "</title>");
+
+            if (title_end && title_end < item_end)
             {
                 size_t len = title_end - title_start;
-                char *title = malloc(len + 1);
-                title[len] = '\0';
+                char *t = malloc(len + 1);
 
-                printf("%s\n", title);
-                free(title);
+                if (t)
+                {
+                    memcpy(t, title_start, len);
+                    t[len] = '\0';
+                    printf("RSS Title: %s\n", t);
+                    free(t);
+                }
             }
         }
+        p = item_end + strlen("</item>");
     }
-
-    p = item_end + strlen("</item>");
 }
+
 
 static void fetch_rss_task(void *arg)
 {
@@ -90,7 +96,66 @@ static void fetch_rss_task(void *arg)
     };
 
     // HTTP Client
-    esp_http_client_handle_t client = 
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if(!client)
+    {
+        printf("Failed to initialize HTTP client!\n");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    err = esp_http_client_perform(client);
+    if(err != ESP_OK)
+    {
+        printf("HTTP request failed: %s\n", esp_err_to_name(err));
+        esp_http_client_cleanup(client);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    int status = esp_http_client_get_status_code(client);
+    printf("HTTP Status: %d\n", status);
+
+    // Read response in chunks
+    char chunk[RSS_READ_CHUNK];
+    char *response = NULL;
+    size_t total = 0;
+    int read_len = 0;
+
+    while(( read_len = esp_http_client_read(client, chunk, sizeof(chunk)) ) > 0)
+    {
+        char *tmp = realloc(response, total + read_len + 1);
+        if(!tmp)
+        {
+            printf("Ran out of memory while reading response X.X\n");
+            free(response);
+
+            response = NULL;
+            total = 0;
+            break;
+        }
+
+        response = tmp;
+        memcpy(response + total, chunk, read_len);
+        total += read_len;
+    }
+
+    if(response)
+    {
+        response[total] = '\0'; // Null termination so it doesn't go all wonky
+        printf("Successfully received %u bytes!\n", (unsigned)total);
+
+        print_rss_titles(response);
+
+        free(response);
+    }
+    else
+    {
+        printf("No response! Something went wrong :[");
+    }
+
+    esp_http_client_cleanup(client);
+    vTaskDelete(NULL);
 }
 
 static void wifi_event_handler(void *event_handler_arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
@@ -129,12 +194,15 @@ static void wifi_event_handler(void *event_handler_arg, esp_event_base_t event_b
     else if(event_id == IP_EVENT_STA_GOT_IP)
     {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
-        ip4addr_ntoa_r(&event->ip_info.ip, ip_str, sizeof(ip_str));
+        ip4addr_ntoa_r((const ip4_addr_t *)&event->ip_info.ip, ip_str, sizeof(ip_str));
 
         printf("IP address acquired from Wifi network: %s\n\n", ip_str);
 
         // update your LVGL label if you want
         lv_label_set_text_fmt(connection_info, "Connected!\nIP: %s", ip_str);
+
+        // Read an RSS feed
+        xTaskCreate(&fetch_rss_task, "fetch_rss", 8*1024, (void*)"https://hackaday.com/feed/", 5, NULL);
     }
 }
 
