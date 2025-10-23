@@ -16,7 +16,7 @@ But I persevered and I think I managed to put together something pretty cool :]
 
 I also plan to add viewing the contents of the posts themselves, but I didn't really have time to add it and right now this works fine enough.
 
-It's somewhat based on the Waveshare LVGL demo for the module: https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.8#05_LVGL_WITH_RAM.
+It's somewhat based on the Waveshare LVGL demo for the module: https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.8#05_LVGL_WITH_RAM. <br>
 WIP image rendering (still in development) is based on https://github.com/Laky2k8/EvilAssWizardGame 0.0.1.
 
 <br>
